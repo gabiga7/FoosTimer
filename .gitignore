@@ -1,0 +1,41 @@
+# Logs
+node_modules
+dist
+dist-ssr
+*.local
+venv
+.venv
+
+# Editor
+.vscode
+.idea
+*.suo
+*.ntvs
+*.njsproj
+*.sln
+*.sw?
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Demos/Previous projects
+demo-claw-studio/
+
+# OpenClaw specifics
+memory/
+AGENTS.md
+SOUL.md
+USER.md
+IDENTITY.md
+TOOLS.md
+HEARTBEAT.md
+MEMORY.md
+BOOTSTRAP.md
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.node.json
+!vercel.json
+!manifest.json
