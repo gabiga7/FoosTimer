@@ -11,10 +11,11 @@ interface Props {
 
 const CalibrationScreen: React.FC<Props> = ({ settings, onSave, onBack }) => {
   const t = translations[settings.language || 'fr'];
-  const [step, setStep] = useState<'intro' | 'ambient' | 'shots' | 'done'>('intro');
+  const [step, setStep] = useState<'intro' | 'ambient' | 'dribble' | 'shots' | 'done'>('intro');
   const [progress, setProgress] = useState(0);
   const [shotsCaptured, setShotsCaptured] = useState<any[]>([]);
   const [ambientData, setAmbientData] = useState({ rms: 0, peak: 0 });
+  const [dribbleData, setDribbleData] = useState({ rmsMax: 0, peakMax: 0, deltaMax: 0 });
   const [currentRms, setCurrentRms] = useState(0);
   
   const streamRef = useRef<MediaStream | null>(null);
@@ -44,7 +45,7 @@ const CalibrationScreen: React.FC<Props> = ({ settings, onSave, onBack }) => {
     let count = 0;
     let sumRms = 0;
     let sumPeak = 0;
-    const duration = 3000;
+    const duration = 5000; // 5s
     const start = Date.now();
 
     const check = () => {
@@ -63,14 +64,50 @@ const CalibrationScreen: React.FC<Props> = ({ settings, onSave, onBack }) => {
         requestAnimationFrame(check);
       } else {
         setAmbientData({ rms: sumRms / count, peak: sumPeak / count });
-        setStep('shots');
-        startShotDetection(analyzer);
+        setStep('dribble');
+        measureDribble(analyzer);
       }
     };
     check();
   };
 
-  const startShotDetection = (analyzer: AnalyserNode) => {
+  const measureDribble = (analyzer: AnalyserNode) => {
+    const samples = new Float32Array(analyzer.fftSize);
+    let maxRms = 0;
+    let maxPeak = 0;
+    let maxDelta = 0;
+    let avgRms = 0;
+    const duration = 5000; // 5s
+    const start = Date.now();
+
+    const check = () => {
+      const now = Date.now();
+      const p = (now - start) / duration;
+      setProgress(p);
+
+      analyzer.getFloatTimeDomainData(samples);
+      const rms = computeRms(samples);
+      const peak = computePeak(samples);
+      avgRms = avgRms * 0.9 + rms * 0.1;
+      const delta = computeDelta(rms, avgRms);
+
+      setCurrentRms(rms);
+      if (rms > maxRms) maxRms = rms;
+      if (peak > maxPeak) maxPeak = peak;
+      if (delta > maxDelta) maxDelta = delta;
+
+      if (now - start < duration) {
+        requestAnimationFrame(check);
+      } else {
+        setDribbleData({ rmsMax: maxRms, peakMax: maxPeak, deltaMax: maxDelta });
+        setStep('shots');
+        startShotDetection(analyzer, maxDelta);
+      }
+    };
+    check();
+  };
+
+  const startShotDetection = (analyzer: AnalyserNode, maxDribbleDelta: number) => {
     const samples = new Float32Array(analyzer.fftSize);
     let captured: any[] = [];
     let lastDetection = 0;
@@ -88,12 +125,13 @@ const CalibrationScreen: React.FC<Props> = ({ settings, onSave, onBack }) => {
 
       const now = Date.now();
       if (now - lastDetection > 800) {
-        if (peak > 0.1 && delta > 0.05) {
+        // Shot must be significantly higher than dribble noise
+        if (delta > maxDribbleDelta * 1.5 && peak > 0.1) {
           lastDetection = now;
           captured.push({ rms, peak, delta });
           setShotsCaptured([...captured]);
           if (captured.length >= 5) {
-            finishCalibration(captured);
+            finishCalibration(captured, maxDribbleDelta);
             return;
           }
         }
@@ -103,7 +141,7 @@ const CalibrationScreen: React.FC<Props> = ({ settings, onSave, onBack }) => {
     detect();
   };
 
-  const finishCalibration = (shots: any[]) => {
+  const finishCalibration = (shots: any[], maxDribbleDelta: number) => {
     const avgShotRms = shots.reduce((a, b) => a + b.rms, 0) / shots.length;
     const avgShotPeak = shots.reduce((a, b) => a + b.peak, 0) / shots.length;
     const avgShotDelta = shots.reduce((a, b) => a + b.delta, 0) / shots.length;
@@ -114,9 +152,10 @@ const CalibrationScreen: React.FC<Props> = ({ settings, onSave, onBack }) => {
       shotRmsAverage: avgShotRms,
       shotPeakAverage: avgShotPeak,
       shotDeltaAverage: avgShotDelta,
-      rmsThreshold: ambientData.rms + (avgShotRms - ambientData.rms) * 0.3,
-      peakThreshold: ambientData.peak + (avgShotPeak - ambientData.peak) * 0.3,
-      deltaThreshold: avgShotDelta * 0.4,
+      // Thresholds are now informed by dribble maximums
+      rmsThreshold: Math.max(dribbleData.rmsMax * 1.2, ambientData.rms + (avgShotRms - ambientData.rms) * 0.3),
+      peakThreshold: Math.max(dribbleData.peakMax * 1.2, ambientData.peak + (avgShotPeak - ambientData.peak) * 0.3),
+      deltaThreshold: Math.max(maxDribbleDelta * 1.3, avgShotDelta * 0.4),
       createdAt: Date.now()
     };
 
@@ -138,13 +177,13 @@ const CalibrationScreen: React.FC<Props> = ({ settings, onSave, onBack }) => {
         </div>
       )}
 
-      {step === 'ambient' && (
+      {(step === 'ambient' || step === 'dribble') && (
         <div className="card">
-          <p>{t.calibrationAmbient}</p>
+          <p>{step === 'ambient' ? t.calibrationAmbient : t.calibrationDribble}</p>
           <div style={{ height: '40px', background: '#333', borderRadius: '8px', overflow: 'hidden', position: 'relative', marginBottom: '15px' }}>
             <div style={{ 
               height: '100%', 
-              background: 'var(--primary-color)', 
+              background: step === 'ambient' ? 'var(--primary-color)' : 'var(--info)', 
               width: `${Math.min(100, currentRms * 500)}%`,
               transition: 'width 0.05s linear'
             }}></div>

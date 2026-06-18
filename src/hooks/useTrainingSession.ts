@@ -135,11 +135,14 @@ export const useTrainingSession = (
 
     setState('shotDetected');
     if (settings.voiceEnabled) {
-      speak(feedback.vocalMessage, { 
-        voiceURI: settings.voiceVoiceURI, 
-        rate: settings.voiceRate, 
-        onEnd: startReplacement 
-      });
+      // Delay before speaking
+      setTimeout(() => {
+        speak(feedback.vocalMessage, { 
+          voiceURI: settings.voiceVoiceURI, 
+          rate: settings.voiceRate, 
+          onEnd: startReplacement 
+        });
+      }, 1000);
     } else {
       setTimeout(startReplacement, 1000);
     }
