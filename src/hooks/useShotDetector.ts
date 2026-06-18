@@ -37,8 +37,8 @@ export const useShotDetector = (
       
       analyzerRef.current.getFloatTimeDomainData(samplesRef.current);
       
-      const rms = computeRms(samplesRef.current);
-      const peak = computePeak(samplesRef.current);
+      const rms = computeRms(samplesRef.current as any);
+      const peak = computePeak(samplesRef.current as any);
       
       // Update moving average for delta
       averageRmsRef.current = averageRmsRef.current * 0.9 + rms * 0.1;

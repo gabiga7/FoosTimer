@@ -1,9 +1,10 @@
 import React from 'react';
 
-import { translations } from '../logic/translations';
+import { translations, Language } from '../logic/translations';
 
-const PrivacyScreen: React.FC<{ settings: any, onBack: () => void }> = ({ settings, onBack }) => {
-  const t = translations[settings.language || 'fr'];
+const PrivacyScreen: React.FC<{ settings: { language?: Language }, onBack: () => void }> = ({ settings, onBack }) => {
+  const lang = settings.language || 'fr';
+  const t = translations[lang];
   return (
     <div>
       <h2>{t.privacyTitle}</h2>

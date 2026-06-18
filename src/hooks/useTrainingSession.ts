@@ -4,14 +4,14 @@ import { useSpeech } from './useSpeech';
 import { useBeep } from './useBeep';
 import { useShotDetector } from './useShotDetector';
 import { getShotFeedback } from '../logic/feedback';
-
 import { translations } from '../logic/translations';
 
 export const useTrainingSession = (
   settings: TrainingSettings,
   profile: CalibrationProfile | null
 ) => {
-  const t = translations[settings.language || 'fr'];
+  const lang = settings.language || 'fr';
+  const t = translations[lang];
   const [state, setState] = useState<TrainingState>('idle');
   const [history, setHistory] = useState<ShotEvent[]>([]);
   const [timer, setTimer] = useState(0);
@@ -43,6 +43,7 @@ export const useTrainingSession = (
     setHistory(prev => [newEvent, ...prev].slice(0, 100));
   }, []);
 
+  // Declarations to fix "used before declaration"
   const startListeningState = useCallback(() => {
     setState('listening');
     startTimeRef.current = Date.now();
@@ -57,7 +58,66 @@ export const useTrainingSession = (
         handleTimeout();
       }
     }, 100);
-  }, [settings.maxDurationSeconds, handleTimeout]);
+  }, [settings.maxDurationSeconds]);
+
+  const startCountdown = useCallback(() => {
+    setState('countdown');
+    if (settings.voiceEnabled) {
+      const phrase = settings.language === 'en' ? "3... 2... 1... go" : "3... 2... 1... top";
+      speak(phrase, { 
+        voiceURI: settings.voiceVoiceURI, 
+        rate: settings.voiceRate, 
+        onEnd: startListeningState 
+      });
+    } else {
+      let count = 3;
+      setTimer(count);
+      const interval = window.setInterval(() => {
+        count -= 1;
+        setTimer(count);
+        if (count <= 0) {
+          clearInterval(interval);
+          startListeningState();
+        }
+      }, 1000);
+    }
+  }, [settings, speak, startListeningState]);
+
+  const startReplacement = useCallback(() => {
+    setState('replacingBall');
+    let remaining = settings.replaceBallSeconds;
+    setTimer(remaining);
+    
+    const interval = window.setInterval(() => {
+      remaining -= 1;
+      setTimer(remaining);
+      if (remaining <= 0) {
+        clearInterval(interval);
+        startCountdown();
+      }
+    }, 1000);
+  }, [settings.replaceBallSeconds, startCountdown]);
+
+  const handleTimeout = useCallback(() => {
+    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    addEvent({
+      type: 'timeout',
+      timeSeconds: settings.maxDurationSeconds,
+      status: 'timeout',
+      message: t.timeout
+    });
+    setState('timeout');
+    if (settings.beepEnabled) playBeep(220, 0.5);
+    if (settings.voiceEnabled) {
+      speak(t.timeout, { 
+        voiceURI: settings.voiceVoiceURI, 
+        rate: settings.voiceRate, 
+        onEnd: startReplacement 
+      });
+    } else {
+      setTimeout(startReplacement, 1000);
+    }
+  }, [settings, speak, addEvent, playBeep, startReplacement, t.timeout]);
 
   const handleShot = useCallback((detectionTime: number) => {
     if (state !== 'listening') return;
@@ -85,73 +145,12 @@ export const useTrainingSession = (
     }
   }, [state, settings, history, speak, addEvent, startReplacement]);
 
-  const handleTimeout = useCallback(() => {
-    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-    addEvent({
-      type: 'timeout',
-      timeSeconds: settings.maxDurationSeconds,
-      status: 'timeout',
-      message: t.timeout
-    });
-    setState('timeout');
-    if (settings.beepEnabled) playBeep(220, 0.5);
-    if (settings.voiceEnabled) {
-      speak(t.timeout, { 
-        voiceURI: settings.voiceVoiceURI, 
-        rate: settings.voiceRate, 
-        onEnd: startReplacement 
-      });
-    } else {
-      setTimeout(startReplacement, 1000);
-    }
-  }, [settings, speak, addEvent, playBeep, startReplacement]);
-
-  const startReplacement = useCallback(() => {
-    setState('replacingBall');
-    let remaining = settings.replaceBallSeconds;
-    setTimer(remaining);
-    
-    const interval = window.setInterval(() => {
-      remaining -= 1;
-      setTimer(remaining);
-      if (remaining <= 0) {
-        clearInterval(interval);
-        startCountdown();
-      }
-    }, 1000);
-  }, [settings.replaceBallSeconds, startCountdown]);
-
-  const startCountdown = useCallback(() => {
-    setState('countdown');
-    if (settings.voiceEnabled) {
-      const phrase = settings.language === 'en' ? "3... 2... 1... go" : "3... 2... 1... top";
-      speak(phrase, { 
-        voiceURI: settings.voiceVoiceURI, 
-        rate: settings.voiceRate, 
-        onEnd: startListeningState 
-      });
-    } else {
-      // Manual countdown if no voice
-      let count = 3;
-      setTimer(count);
-      const interval = window.setInterval(() => {
-        count -= 1;
-        setTimer(count);
-        if (count <= 0) {
-          clearInterval(interval);
-          startListeningState();
-        }
-      }, 1000);
-    }
-  }, [settings, speak, startListeningState]);
-
   const startTraining = async () => {
     try {
       const newStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const newCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
       setStream(newStream);
       setAudioContext(newCtx);
-      // Wait for audio context to be ready
       if (newCtx.state === 'suspended') {
         await newCtx.resume();
       }
@@ -169,7 +168,6 @@ export const useTrainingSession = (
     setState('idle');
   };
 
-  // Detector hook integration
   const detector = useShotDetector(
     audioContext,
     stream,

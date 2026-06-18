@@ -9,9 +9,11 @@ interface Props {
 }
 
 import { translations } from '../logic/translations';
+import { TrainingSettings } from '../types';
 
 const HomeScreen: React.FC<Props> = ({ settings, onStart, onCalibrate, onSettings, onPrivacy }) => {
-  const t = translations[settings.language || 'fr'];
+  const lang = settings.language || 'fr';
+  const t = translations[lang];
   return (
     <div className="text-center">
       <h1 style={{ fontSize: '3rem', color: 'var(--primary-color)', marginBottom: '0.5rem' }}>{t.title}</h1>
