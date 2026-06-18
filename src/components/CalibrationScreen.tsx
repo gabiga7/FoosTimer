@@ -125,8 +125,8 @@ const CalibrationScreen: React.FC<Props> = ({ settings, onSave, onBack }) => {
 
       const now = Date.now();
       if (now - lastDetection > 800) {
-        // Shot must be significantly higher than dribble noise
-        if (delta > maxDribbleDelta * 1.5 && peak > 0.1) {
+        // More lenient logic: a shot is just significantly louder than a dribble or hits a high peak
+        if (delta > maxDribbleDelta * 1.1 || peak > 0.3) {
           lastDetection = now;
           captured.push({ rms, peak, delta });
           setShotsCaptured([...captured]);
@@ -152,10 +152,10 @@ const CalibrationScreen: React.FC<Props> = ({ settings, onSave, onBack }) => {
       shotRmsAverage: avgShotRms,
       shotPeakAverage: avgShotPeak,
       shotDeltaAverage: avgShotDelta,
-      // Thresholds are now informed by dribble maximums
-      rmsThreshold: Math.max(dribbleData.rmsMax * 1.2, ambientData.rms + (avgShotRms - ambientData.rms) * 0.3),
-      peakThreshold: Math.max(dribbleData.peakMax * 1.2, ambientData.peak + (avgShotPeak - ambientData.peak) * 0.3),
-      deltaThreshold: Math.max(maxDribbleDelta * 1.3, avgShotDelta * 0.4),
+      // Thresholds informed by dribble maximums but with safer fallbacks
+      rmsThreshold: Math.max(0.01, dribbleData.rmsMax * 1.1),
+      peakThreshold: Math.max(0.05, dribbleData.peakMax * 1.1),
+      deltaThreshold: Math.max(0.02, maxDribbleDelta * 1.1),
       createdAt: Date.now()
     };
 
