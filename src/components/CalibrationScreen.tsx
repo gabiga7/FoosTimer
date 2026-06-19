@@ -125,15 +125,19 @@ const CalibrationScreen: React.FC<Props> = ({ settings, onSave, onBack }) => {
 
       const now = Date.now();
       if (now - lastDetection > 800) {
-        // High sensitivity: trigger on any significant jump relative to ambient or a clear peak
-        // We use a lower multiplier for dribble noise to ensure shots are caught
-        const isSignificantJump = delta > Math.max(0.01, maxDribbleDelta * 0.5);
-        const isHighPeak = peak > 0.15;
+        // IMPROVED: Using a composite score to be more precise
+        // We look for a sharp rise (delta) AND a significant peak
+        const isSignificantJump = delta > Math.max(0.005, maxDribbleDelta * 0.8);
+        const isSharpPeak = peak > 0.12;
 
-        if (isSignificantJump || isHighPeak) {
+        if (isSignificantJump && isSharpPeak) {
           lastDetection = now;
           captured.push({ rms, peak, delta });
           setShotsCaptured([...captured]);
+          
+          // Visual feedback for successful capture
+          setCurrentRms(1.0); // Spike the meter
+          
           if (captured.length >= 5) {
             finishCalibration(captured, maxDribbleDelta);
             return;
@@ -146,22 +150,26 @@ const CalibrationScreen: React.FC<Props> = ({ settings, onSave, onBack }) => {
   };
 
   const finishCalibration = (shots: any[], maxDribbleDelta: number) => {
-    const avgShotRms = shots.reduce((a, b) => a + b.rms, 0) / shots.length;
-    const avgShotPeak = shots.reduce((a, b) => a + b.peak, 0) / shots.length;
-    const avgShotDelta = shots.reduce((a, b) => a + b.delta, 0) / shots.length;
+      // IMPROVED: Filter out outliers (shots that were too weak or too noisy)
+      const validShots = shots.filter(s => s.peak > dribbleData.peakMax * 1.05);
+      const targetShots = validShots.length >= 3 ? validShots : shots;
 
-    const profile: CalibrationProfile = {
-      ambientRms: ambientData.rms,
-      ambientPeak: ambientData.peak,
-      shotRmsAverage: avgShotRms,
-      shotPeakAverage: avgShotPeak,
-      shotDeltaAverage: avgShotDelta,
-      // Aggressive thresholds for maximum sensitivity
-      rmsThreshold: Math.min(avgShotRms * 0.5, dribbleData.rmsMax * 1.1),
-      peakThreshold: Math.min(avgShotPeak * 0.5, dribbleData.peakMax * 1.1),
-      deltaThreshold: Math.min(avgShotDelta * 0.4, maxDribbleDelta * 1.05),
-      createdAt: Date.now()
-    };
+      const avgShotRms = targetShots.reduce((a, b) => a + b.rms, 0) / targetShots.length;
+      const avgShotPeak = targetShots.reduce((a, b) => a + b.peak, 0) / targetShots.length;
+      const avgShotDelta = targetShots.reduce((a, b) => a + b.delta, 0) / targetShots.length;
+
+      const profile: CalibrationProfile = {
+        ambientRms: ambientData.rms,
+        ambientPeak: ambientData.peak,
+        shotRmsAverage: avgShotRms,
+        shotPeakAverage: avgShotPeak,
+        shotDeltaAverage: avgShotDelta,
+        // The key is the Delta (sudden increase) + Peak (absolute volume)
+        rmsThreshold: Math.max(0.005, dribbleData.rmsMax * 1.1),
+        peakThreshold: Math.max(0.04, dribbleData.peakMax * 1.05),
+        deltaThreshold: Math.max(0.01, maxDribbleDelta * 1.1),
+        createdAt: Date.now()
+      };
 
     onSave(profile);
     setStep('done');
