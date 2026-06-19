@@ -19,7 +19,9 @@ const DEFAULT_SETTINGS: TrainingSettings = {
   beepEnabled: true,
   sensitivityMode: 'normal',
   debugMode: false,
-  language: 'fr'
+  language: 'fr',
+  detectionScoreThreshold: 4,
+  cooldownMs: 800
 };
 
 const App: React.FC = () => {

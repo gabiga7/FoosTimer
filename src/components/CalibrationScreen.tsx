@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { CalibrationProfile, TrainingSettings } from '../types';
-import { computeRms, computePeak, computeDelta } from '../logic/audioMath';
+import { computeRms, computePeak, computeDelta, computeHighFrequencyRatio, percentile, median } from '../logic/audioMath';
 import { translations } from '../logic/translations';
 
 interface Props {
@@ -13,17 +13,27 @@ const CalibrationScreen: React.FC<Props> = ({ settings, onSave, onBack }) => {
   const t = translations[settings.language || 'fr'];
   const [step, setStep] = useState<'intro' | 'ambient' | 'dribble' | 'shots' | 'done'>('intro');
   const [progress, setProgress] = useState(0);
-  const [shotsCaptured, setShotsCaptured] = useState<any[]>([]);
-  const [ambientData, setAmbientData] = useState({ rms: 0, peak: 0 });
-  const [dribbleData, setDribbleData] = useState({ rmsMax: 0, peakMax: 0, deltaMax: 0 });
   const [currentRms, setCurrentRms] = useState(0);
+  const [quality, setQuality] = useState<CalibrationProfile['quality']>('medium');
   
+  // Data Collection
+  const ambientBuffer = useRef<{rms: number[], peak: number[]}>({ rms: [], peak: [] });
+  const dribbleBuffer = useRef<{rms: number[], peak: number[], delta: number[], highFreq: number[]}>({ rms: [], peak: [], delta: [], highFreq: [] });
+  const shotBuffer = useRef<{rms: number[], peak: number[], delta: number[], highFreq: number[]}[]>([]);
+  const [shotsCapturedCount, setShotsCapturedCount] = useState(0);
+
   const streamRef = useRef<MediaStream | null>(null);
   const analyzerRef = useRef<AnalyserNode | null>(null);
 
   const startCalibration = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: { 
+          echoCancellation: false, 
+          noiseSuppression: false, 
+          autoGainControl: false 
+        } 
+      });
       streamRef.current = stream;
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
       const source = ctx.createMediaStreamSource(stream);
@@ -35,35 +45,31 @@ const CalibrationScreen: React.FC<Props> = ({ settings, onSave, onBack }) => {
       setStep('ambient');
       measureAmbient(analyzer);
     } catch (err) {
-      alert("Accès micro refusé ou non supporté.");
-      onBack();
+      alert("Accès micro refusé ou contraintes non supportées. Essai avec réglages par défaut.");
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        streamRef.current = stream;
+        // ... repeat initialization with simple stream
+      } catch(e) { onBack(); }
     }
   };
 
   const measureAmbient = (analyzer: AnalyserNode) => {
     const samples = new Float32Array(analyzer.fftSize);
-    let count = 0;
-    let sumRms = 0;
-    let sumPeak = 0;
-    const duration = 5000; // 5s
+    const duration = 5000;
     const start = Date.now();
 
     const check = () => {
       const now = Date.now();
-      const p = (now - start) / duration;
-      setProgress(p);
-
+      setProgress((now - start) / duration);
       analyzer.getFloatTimeDomainData(samples);
       const rms = computeRms(samples);
+      ambientBuffer.current.rms.push(rms);
+      ambientBuffer.current.peak.push(computePeak(samples));
       setCurrentRms(rms);
-      sumRms += rms;
-      sumPeak += computePeak(samples);
-      count++;
 
-      if (now - start < duration) {
-        requestAnimationFrame(check);
-      } else {
-        setAmbientData({ rms: sumRms / count, peak: sumPeak / count });
+      if (now - start < duration) requestAnimationFrame(check);
+      else {
         setStep('dribble');
         measureDribble(analyzer);
       }
@@ -73,75 +79,64 @@ const CalibrationScreen: React.FC<Props> = ({ settings, onSave, onBack }) => {
 
   const measureDribble = (analyzer: AnalyserNode) => {
     const samples = new Float32Array(analyzer.fftSize);
-    let maxRms = 0;
-    let maxPeak = 0;
-    let maxDelta = 0;
+    const freqData = new Uint8Array(analyzer.frequencyBinCount);
     let avgRms = 0;
-    const duration = 5000; // 5s
+    const duration = 5000;
     const start = Date.now();
 
     const check = () => {
       const now = Date.now();
-      const p = (now - start) / duration;
-      setProgress(p);
-
+      setProgress((now - start) / duration);
       analyzer.getFloatTimeDomainData(samples);
+      analyzer.getByteFrequencyData(freqData);
+      
       const rms = computeRms(samples);
       const peak = computePeak(samples);
       avgRms = avgRms * 0.9 + rms * 0.1;
       const delta = computeDelta(rms, avgRms);
+      const hf = computeHighFrequencyRatio(freqData);
 
+      dribbleBuffer.current.rms.push(rms);
+      dribbleBuffer.current.peak.push(peak);
+      dribbleBuffer.current.delta.push(delta);
+      dribbleBuffer.current.highFreq.push(hf);
       setCurrentRms(rms);
-      if (rms > maxRms) maxRms = rms;
-      if (peak > maxPeak) maxPeak = peak;
-      if (delta > maxDelta) maxDelta = delta;
 
-      if (now - start < duration) {
-        requestAnimationFrame(check);
-      } else {
-        setDribbleData({ rmsMax: maxRms, peakMax: maxPeak, deltaMax: maxDelta });
+      if (now - start < duration) requestAnimationFrame(check);
+      else {
         setStep('shots');
-        startShotDetection(analyzer, maxDelta);
+        startShotDetection(analyzer);
       }
     };
     check();
   };
 
-  const startShotDetection = (analyzer: AnalyserNode, maxDribbleDelta: number) => {
+  const startShotDetection = (analyzer: AnalyserNode) => {
     const samples = new Float32Array(analyzer.fftSize);
-    let captured: any[] = [];
+    const freqData = new Uint8Array(analyzer.frequencyBinCount);
     let lastDetection = 0;
     let avgRms = 0;
 
     const detect = () => {
       if (step === 'done') return;
       analyzer.getFloatTimeDomainData(samples);
+      analyzer.getByteFrequencyData(freqData);
       const rms = computeRms(samples);
-      setCurrentRms(rms);
-      
       const peak = computePeak(samples);
       avgRms = avgRms * 0.9 + rms * 0.1;
       const delta = computeDelta(rms, avgRms);
+      const hf = computeHighFrequencyRatio(freqData);
+      setCurrentRms(rms);
 
       const now = Date.now();
-      if (now - lastDetection > 800) {
-        // IMPROVED: Using a composite score to be more precise
-        // We look for a sharp rise (delta) AND a significant peak
-        const isSignificantJump = delta > Math.max(0.005, maxDribbleDelta * 0.8);
-        const isSharpPeak = peak > 0.12;
-
-        if (isSignificantJump && isSharpPeak) {
-          lastDetection = now;
-          captured.push({ rms, peak, delta });
-          setShotsCaptured([...captured]);
-          
-          // Visual feedback for successful capture
-          setCurrentRms(1.0); // Spike the meter
-          
-          if (captured.length >= 5) {
-            finishCalibration(captured, maxDribbleDelta);
-            return;
-          }
+      // Robust detection during calibration: use a temporary high threshold
+      if (now - lastDetection > 1000 && peak > 0.2 && delta > 0.05) {
+        lastDetection = now;
+        shotBuffer.current.push({ rms: [rms], peak: [peak], delta: [delta], highFreq: [hf] });
+        setShotsCapturedCount(shotBuffer.current.length);
+        if (shotBuffer.current.length >= 5) {
+          calculateFinalProfile();
+          return;
         }
       }
       requestAnimationFrame(detect);
@@ -149,33 +144,46 @@ const CalibrationScreen: React.FC<Props> = ({ settings, onSave, onBack }) => {
     detect();
   };
 
-  const finishCalibration = (shots: any[], maxDribbleDelta: number) => {
-      // IMPROVED: Filter out outliers (shots that were too weak or too noisy)
-      const validShots = shots.filter(s => s.peak > dribbleData.peakMax * 1.05);
-      const targetShots = validShots.length >= 3 ? validShots : shots;
+  const calculateFinalProfile = () => {
+    const d = dribbleBuffer.current;
+    const dribblePeakP95 = percentile(d.peak, 95);
+    const dribbleDeltaP95 = percentile(d.delta, 95);
+    const dribbleRmsP95 = percentile(d.rms, 95);
+    const dribbleHfP95 = percentile(d.highFreq, 95);
 
-      const avgShotRms = targetShots.reduce((a, b) => a + b.rms, 0) / targetShots.length;
-      const avgShotPeak = targetShots.reduce((a, b) => a + b.peak, 0) / targetShots.length;
-      const avgShotDelta = targetShots.reduce((a, b) => a + b.delta, 0) / targetShots.length;
+    const sRms = shotBuffer.current.map(s => s.rms[0]);
+    const sPeak = shotBuffer.current.map(s => s.peak[0]);
+    const sDelta = shotBuffer.current.map(s => s.delta[0]);
+    const sHf = shotBuffer.current.map(s => s.highFreq[0]);
 
-      const profile: CalibrationProfile = {
-        ambientRms: ambientData.rms,
-        ambientPeak: ambientData.peak,
-        shotRmsAverage: avgShotRms,
-        shotPeakAverage: avgShotPeak,
-        shotDeltaAverage: avgShotDelta,
-        // The key is the Delta (sudden increase) + Peak (absolute volume)
-        rmsThreshold: Math.max(0.005, dribbleData.rmsMax * 1.1),
-        peakThreshold: Math.max(0.04, dribbleData.peakMax * 1.05),
-        deltaThreshold: Math.max(0.01, maxDribbleDelta * 1.1),
-        createdAt: Date.now()
-      };
+    const shotRmsP20 = percentile(sRms, 20);
+    const shotPeakP20 = percentile(sPeak, 20);
+    const shotDeltaP20 = percentile(sDelta, 20);
+    const shotHfP20 = percentile(sHf, 20);
+
+    // Quality assessment
+    const separation = shotPeakP20 / (dribblePeakP95 + 0.01);
+    let q: CalibrationProfile['quality'] = 'poor';
+    if (separation > 2.0) q = 'good';
+    else if (separation > 1.3) q = 'medium';
+    setQuality(q);
+
+    const profile: CalibrationProfile = {
+      rmsThreshold: (dribbleRmsP95 + shotRmsP20) / 2,
+      peakThreshold: (dribblePeakP95 + shotPeakP20) / 2,
+      deltaThreshold: (dribbleDeltaP95 + shotDeltaP20) / 2,
+      highFreqThreshold: (dribbleHfP95 + shotHfP20) / 2,
+      quality: q,
+      qualityScore: separation,
+      createdAt: Date.now(),
+      ambientRmsMedian: median(ambientBuffer.current.rms),
+      dribblePeakP95,
+      shotPeakP20
+    };
 
     onSave(profile);
     setStep('done');
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(t => t.stop());
-    }
+    streamRef.current?.getTracks().forEach(t => t.stop());
   };
 
   return (
@@ -193,12 +201,7 @@ const CalibrationScreen: React.FC<Props> = ({ settings, onSave, onBack }) => {
         <div className="card">
           <p>{step === 'ambient' ? t.calibrationAmbient : t.calibrationDribble}</p>
           <div style={{ height: '40px', background: '#333', borderRadius: '8px', overflow: 'hidden', position: 'relative', marginBottom: '15px' }}>
-            <div style={{ 
-              height: '100%', 
-              background: step === 'ambient' ? 'var(--primary-color)' : 'var(--info)', 
-              width: `${Math.min(100, currentRms * 500)}%`,
-              transition: 'width 0.05s linear'
-            }}></div>
+            <div style={{ height: '100%', background: step === 'ambient' ? 'var(--primary-color)' : 'var(--info)', width: `${Math.min(100, currentRms * 500)}%` }}></div>
           </div>
           <div style={{ height: '6px', background: '#222', borderRadius: '3px', overflow: 'hidden' }}>
             <div style={{ height: '100%', background: '#666', width: `${progress * 100}%` }}></div>
@@ -209,31 +212,17 @@ const CalibrationScreen: React.FC<Props> = ({ settings, onSave, onBack }) => {
       {step === 'shots' && (
         <div className="card">
           <p>{t.calibrationShots}</p>
-          <div style={{ height: '60px', background: '#333', borderRadius: '8px', overflow: 'hidden', position: 'relative', marginBottom: '20px' }}>
-            <div style={{ 
-              height: '100%', 
-              background: 'var(--secondary-color)', 
-              width: `${Math.min(100, currentRms * 500)}%`,
-              transition: 'width 0.05s linear'
-            }}></div>
-            <div style={{ 
-              position: 'absolute', 
-              top: 0, 
-              left: '20%', 
-              height: '100%', 
-              width: '2px', 
-              background: 'rgba(255,255,255,0.2)' 
-            }}></div>
-          </div>
-          <div style={{ fontSize: '2rem', fontWeight: 'bold' }}>{shotsCaptured.length} / 5</div>
-          <p className="text-muted">{t.calibrationCaptured}</p>
+          <div style={{ fontSize: '3rem', fontWeight: 'bold' }}>{shotsCapturedCount} / 5</div>
         </div>
       )}
 
       {step === 'done' && (
         <div className="card">
           <p>{t.calibrationDone}</p>
-          <button className="big-button big-button-primary" onClick={onBack}>{t.back}</button>
+          <div className={`status-badge ${quality === 'good' ? 'badge-listening' : quality === 'medium' ? 'badge-waiting' : 'badge-danger'}`}>
+             Qualité: {quality}
+          </div>
+          <button className="big-button big-button-primary" onClick={onBack} style={{ marginTop: '20px' }}>{t.back}</button>
         </div>
       )}
 

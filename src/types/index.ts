@@ -1,5 +1,5 @@
-export type SensitivityMode = 'auto' | 'low' | 'normal' | 'high';
-export type TrainingState = 'idle' | 'calibratingAmbient' | 'calibratingShots' | 'ready' | 'countdown' | 'listening' | 'shotDetected' | 'replacingBall' | 'timeout' | 'paused' | 'error';
+export type SensitivityMode = 'low' | 'normal' | 'high';
+export type TrainingState = 'idle' | 'calibratingAmbient' | 'calibratingDribble' | 'calibratingShots' | 'ready' | 'countdown' | 'listening' | 'shotDetected' | 'replacingBall' | 'timeout' | 'paused' | 'error' | 'validation';
 export type ShotStatus = 'too_early' | 'good' | 'late' | 'timeout' | 'regular' | 'irregular';
 
 export interface TrainingSettings {
@@ -16,18 +16,22 @@ export interface TrainingSettings {
   sensitivityMode: SensitivityMode;
   debugMode: boolean;
   language: 'fr' | 'en';
+  detectionScoreThreshold: number;
+  cooldownMs: number;
 }
 
 export interface CalibrationProfile {
-  ambientRms: number;
-  ambientPeak: number;
-  shotRmsAverage: number;
-  shotPeakAverage: number;
-  shotDeltaAverage: number;
   rmsThreshold: number;
   peakThreshold: number;
   deltaThreshold: number;
+  highFreqThreshold: number;
+  quality: 'good' | 'medium' | 'poor';
+  qualityScore: number;
   createdAt: number;
+  // Metrics for debug
+  ambientRmsMedian: number;
+  dribblePeakP95: number;
+  shotPeakP20: number;
 }
 
 export interface ShotEvent {
@@ -43,6 +47,9 @@ export interface AudioFeatures {
   rms: number;
   peak: number;
   delta: number;
+  highFreq: number;
+  score: number;
+  isPeakShort: boolean;
 }
 
 export interface FeedbackResult {
@@ -50,13 +57,4 @@ export interface FeedbackResult {
   message: string;
   vocalMessage: string;
   variant: 'danger' | 'success' | 'warning' | 'info';
-}
-
-export interface TrainingStats {
-  totalShots: number;
-  tooEarlyCount: number;
-  inZoneCount: number;
-  timeoutCount: number;
-  averageInZoneTime: number;
-  isRegular: boolean;
 }

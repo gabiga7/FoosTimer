@@ -66,10 +66,21 @@ const TrainingScreen: React.FC<Props> = ({ settings, profile, onBack }) => {
       </div>
 
       {settings.debugMode && (
-        <div className="card" style={{ fontSize: '0.8rem', fontFamily: 'monospace' }}>
-          <div>RMS: {debugInfo.rms.toFixed(4)} (Threshold: {profile?.rmsThreshold.toFixed(4)})</div>
-          <div>Peak: {debugInfo.peak.toFixed(4)} (Threshold: {profile?.peakThreshold.toFixed(4)})</div>
-          <div>Delta: {debugInfo.delta.toFixed(4)} (Threshold: {profile?.deltaThreshold.toFixed(4)})</div>
+        <div className="card" style={{ fontSize: '0.75rem', fontFamily: 'monospace', lineHeight: '1.4' }}>
+          <div style={{ color: 'var(--primary-color)', fontWeight: 'bold', marginBottom: '5px' }}>AUDIO DEBUG</div>
+          <div className="grid-2">
+            <div>
+              RMS: {debugInfo.rms.toFixed(4)}<br/>
+              PEAK: {debugInfo.peak.toFixed(4)}<br/>
+              DELTA: {debugInfo.delta.toFixed(4)}<br/>
+              FREQ: {debugInfo.highFreq.toFixed(3)}
+            </div>
+            <div style={{ borderLeft: '1px solid #444', paddingLeft: '10px' }}>
+              SCORE: <span style={{ fontSize: '1.2rem', color: debugInfo.score >= settings.detectionScoreThreshold ? 'var(--primary-color)' : 'white' }}>{debugInfo.score}</span> / {settings.detectionScoreThreshold}<br/>
+              SHORT: {debugInfo.isPeakShort ? 'YES' : 'NO'}<br/>
+              REJECT: <span style={{ color: 'var(--danger)' }}>{detector.lastRejectReason}</span>
+            </div>
+          </div>
         </div>
       )}
 

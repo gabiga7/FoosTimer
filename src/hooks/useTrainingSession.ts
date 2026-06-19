@@ -119,7 +119,7 @@ export const useTrainingSession = (
     }
   }, [settings, speak, addEvent, playBeep, startReplacement, t.timeout]);
 
-  const handleShot = useCallback((detectionTime: number) => {
+  const handleShot = useCallback((detectionTime: number, shotScore: number) => {
     if (state !== 'listening') return;
     
     if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
@@ -176,16 +176,9 @@ export const useTrainingSession = (
     stream,
     profile,
     settings,
-    state !== 'listening' || isSpeaking,
+    state === 'listening',
     handleShot
   );
-
-  useEffect(() => {
-    if (state === 'listening' && !detector.isListening) {
-      detector.startListening();
-    }
-    return () => detector.stopListening();
-  }, [state, detector]);
 
   return {
     state,
@@ -193,7 +186,8 @@ export const useTrainingSession = (
     timer,
     startTraining,
     stopTraining,
-    handleManualShot: () => handleShot(Date.now()),
-    debugInfo: detector.currentAudio
+    handleManualShot: () => handleShot(Date.now(), 6),
+    debugInfo: detector.currentAudio,
+    detector // Expose the whole detector for lastRejectReason
   };
 };
