@@ -125,8 +125,12 @@ const CalibrationScreen: React.FC<Props> = ({ settings, onSave, onBack }) => {
 
       const now = Date.now();
       if (now - lastDetection > 800) {
-        // More lenient logic: a shot is just significantly louder than a dribble or hits a high peak
-        if (delta > maxDribbleDelta * 1.1 || peak > 0.3) {
+        // High sensitivity: trigger on any significant jump relative to ambient or a clear peak
+        // We use a lower multiplier for dribble noise to ensure shots are caught
+        const isSignificantJump = delta > Math.max(0.01, maxDribbleDelta * 0.5);
+        const isHighPeak = peak > 0.15;
+
+        if (isSignificantJump || isHighPeak) {
           lastDetection = now;
           captured.push({ rms, peak, delta });
           setShotsCaptured([...captured]);
@@ -152,10 +156,10 @@ const CalibrationScreen: React.FC<Props> = ({ settings, onSave, onBack }) => {
       shotRmsAverage: avgShotRms,
       shotPeakAverage: avgShotPeak,
       shotDeltaAverage: avgShotDelta,
-      // Thresholds informed by dribble maximums but with safer fallbacks
-      rmsThreshold: Math.max(0.01, dribbleData.rmsMax * 1.1),
-      peakThreshold: Math.max(0.05, dribbleData.peakMax * 1.1),
-      deltaThreshold: Math.max(0.02, maxDribbleDelta * 1.1),
+      // Aggressive thresholds for maximum sensitivity
+      rmsThreshold: Math.min(avgShotRms * 0.5, dribbleData.rmsMax * 1.1),
+      peakThreshold: Math.min(avgShotPeak * 0.5, dribbleData.peakMax * 1.1),
+      deltaThreshold: Math.min(avgShotDelta * 0.4, maxDribbleDelta * 1.05),
       createdAt: Date.now()
     };
 
